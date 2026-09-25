@@ -1,0 +1,155 @@
+name: Verificar y construir APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verificar código completo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+
+      - name: Mostrar versiones
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Generar plataforma Android si no existe
+        run: |
+          set -euo pipefail
+
+          if [ ! -d android ]; then
+            flutter create --platforms=android --no-pub .
+          fi
+
+          rm -f test/widget_test.dart
+
+          sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
+            android/app/src/main/AndroidManifest.xml
+
+      - name: Obtener dependencias
+        run: flutter pub get
+
+      - name: Formatear todos los Dart
+        run: dart format lib test
+
+      - name: Analizar todo el proyecto
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Ejecutar todas las pruebas
+        run: flutter test
+
+  build:
+    name: Construir APK
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+
+      - name: Mostrar versiones
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Generar plataforma Android si no existe
+        run: |
+          set -euo pipefail
+
+          if [ ! -d android ]; then
+            flutter create --platforms=android --no-pub .
+          fi
+
+          rm -f test/widget_test.dart
+
+          sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
+            android/app/src/main/AndroidManifest.xml
+
+      - name: Restaurar KeyStore fijo
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: El secreto KEYSTORE_BASE64 no está configurado."
+            echo "No se generará una clave nueva porque eso cambiaría la firma de la aplicación."
+            exit 1
+          fi
+
+          mkdir -p android/app
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/key.jks
+
+          if [ ! -s android/app/key.jks ]; then
+            echo "ERROR: El archivo android/app/key.jks quedó vacío."
+            exit 1
+          fi
+
+          echo "Verificando keystore..."
+
+          keytool -list \
+            -keystore android/app/key.jks \
+            -storepass 123456 \
+            -alias controlkey \
+            >/dev/null
+
+          echo "Keystore válido encontrado."
+
+          cat << 'EOF' > android/key.properties
+          storePassword=123456
+          keyPassword=123456
+          keyAlias=controlkey
+          storeFile=key.jks
+          EOF
+
+          echo "key.properties creado correctamente."
+
+      - name: Obtener dependencias
+        run: flutter pub get
+
+      - name: Construir APK release
+        run: flutter build apk --release
+
+      - name: Renombrar APK para entrega
+        run: |
+          set -euo pipefail
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+          ls -lh build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Control-de-Guardia-v1.0.2
+          path: build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+          if-no-files-found: error
+          retention-days: 14
