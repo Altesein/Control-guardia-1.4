@@ -55,7 +55,11 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
   final Map<int, Set<int>> _daysOffByOfficer = {};
   bool _loading = true;
   final GlobalKey _reportKey = GlobalKey();
+  final GlobalKey _turnsReportKey = GlobalKey();
+  final GlobalKey _attendanceReportKey = GlobalKey();
+  final GlobalKey _routesReportKey = GlobalKey();
   final ExportService _exportService = ExportService();
+  Map<String, List<Assignment>> _assignmentsByDay = {};
 
   static DateTime _weekMonday(DateTime date) => DateTime(
         date.year,
@@ -84,6 +88,24 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
 
     final rest = <String, Map<int, int>>{};
     final blocks = <String, List<RestBlock>>{};
+    final assignments = <String, List<Assignment>>{};
+
+    final assignmentRows = await AppDb.instance.assignmentsForWeek(
+      _iso(_monday),
+      _iso(_monday.add(const Duration(days: 6))),
+    );
+    for (final row in assignmentRows) {
+      final date = row['date'] as String;
+      (assignments[date] ??= <Assignment>[]).add(
+        Assignment(
+          date: date,
+          officer: row['name'] as String,
+          hour: (row['hour'] as num).toInt(),
+          longRoute: ((row['long_route'] as num?)?.toInt() ?? 0) == 1,
+          restBlock: (row['rest_block'] as num?)?.toInt() ?? 0,
+        ),
+      );
+    }
 
     for (var i = 0; i < 7; i++) {
       final date = _monday.add(Duration(days: i));
@@ -111,6 +133,7 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
       _blocksByDay
         ..clear()
         ..addAll(blocks);
+      _assignmentsByDay = assignments;
       _selectedOfficerId = _selectedOfficerId != null &&
               active.any((o) => o.id == _selectedOfficerId)
           ? _selectedOfficerId
@@ -512,14 +535,159 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
   }
 
   Future<void> _sharePersonalSchedule(Officer officer) async {
+    var sharePersonal = true;
+    var shareTurns = true;
+    var shareAttendance = true;
+    var shareRoutes = true;
+
     final safeName = officer.alias.trim().isNotEmpty
         ? officer.alias.trim()
         : officer.name.trim();
     final cleanName = safeName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
-    await _exportService.shareWidget(
-      _reportKey,
-      fileName: 'horario_personal_${cleanName}_semana_${_weekNumber()}.png',
-      shareText: 'Horario personal de ${officer.alias.trim().isNotEmpty ? officer.alias.trim() : officer.name} · Semana ${_weekNumber()}',
+    final personalFileName =
+        'horario_personal_${cleanName}_semana_${_weekNumber()}.png';
+    final personalShareText =
+        'Horario personal de ${officer.alias.trim().isNotEmpty ? officer.alias.trim() : officer.name} · Semana ${_weekNumber()}';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final allSelected =
+                sharePersonal && shareTurns && shareAttendance && shareRoutes;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '¿Qué deseas compartir?',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: kBrandNavy,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Puedes seleccionar el horario personal y los demás reportes.',
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: allSelected,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text(
+                        'Seleccionar todos',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      onChanged: (value) {
+                        final selected = value ?? false;
+                        setSheetState(() {
+                          sharePersonal = selected;
+                          shareTurns = selected;
+                          shareAttendance = selected;
+                          shareRoutes = selected;
+                        });
+                      },
+                    ),
+                    const Divider(height: 1),
+                    CheckboxListTile(
+                      value: sharePersonal,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text('Horario personal de $safeName'),
+                      subtitle: const Text('Reporte del oficial seleccionado'),
+                      onChanged: (value) => setSheetState(
+                        () => sharePersonal = value ?? false,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      value: shareTurns,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Turnos'),
+                      subtitle: const Text('Turnos de descanso de la semana'),
+                      onChanged: (value) => setSheetState(
+                        () => shareTurns = value ?? false,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      value: shareAttendance,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Asistencia'),
+                      subtitle: const Text('Disponibilidad semanal de los oficiales'),
+                      onChanged: (value) => setSheetState(
+                        () => shareAttendance = value ?? false,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      value: shareRoutes,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Recorridos'),
+                      subtitle: const Text('Programación semanal de recorridos'),
+                      onChanged: (value) => setSheetState(
+                        () => shareRoutes = value ?? false,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: !(sharePersonal || shareTurns || shareAttendance || shareRoutes)
+                            ? null
+                            : () async {
+                                final reports = <({GlobalKey key, String fileName})>[];
+                                if (sharePersonal) {
+                                  reports.add((
+                                    key: _reportKey,
+                                    fileName: personalFileName,
+                                  ));
+                                }
+                                if (shareTurns) {
+                                  reports.add((
+                                    key: _turnsReportKey,
+                                    fileName: 'horario_turnos_semanal.png',
+                                  ));
+                                }
+                                if (shareAttendance) {
+                                  reports.add((
+                                    key: _attendanceReportKey,
+                                    fileName: 'horario_asistencia_semanal.png',
+                                  ));
+                                }
+                                if (shareRoutes) {
+                                  reports.add((
+                                    key: _routesReportKey,
+                                    fileName: 'horario_recorridos_semanal.png',
+                                  ));
+                                }
+
+                                Navigator.pop(sheetContext);
+                                await _exportService.shareWidgets(
+                                  reports,
+                                  shareText: personalShareText,
+                                );
+                              },
+                        icon: const Icon(Icons.share),
+                        label: const Text('Compartir seleccionados'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -566,9 +734,11 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                     ),
                   ),
                 )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
+              : Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView(
                     padding: const EdgeInsets.fromLTRB(12, 14, 12, 24),
                     children: [
                       const SectionTitle(
@@ -649,7 +819,6 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                         ),
                         const SizedBox(height: 12),
                         RepaintBoundary(
-                          key: _reportKey,
                           child: Container(
                             color: Colors.white,
                             padding: const EdgeInsets.all(4),
@@ -665,7 +834,74 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                         ),
                       ],
                     ],
-                  ),
+                      ),
+                    ),
+                    Positioned(
+                      left: -10000,
+                      top: 0,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 1000,
+                            child: RepaintBoundary(
+                              key: _turnsReportKey,
+                              child: WeeklyRestMatrixReport(
+                                officers: _officers,
+                                restByDay: _restByDay,
+                                daysOffByOfficer: _daysOffByOfficer,
+                                restBlocksByDay: _blocksByDay,
+                                monday: _monday,
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 565,
+                            child: RepaintBoundary(
+                              key: _attendanceReportKey,
+                              child: Container(
+                                color: Colors.white,
+                                padding: const EdgeInsets.all(12),
+                                child: WeeklyAvailabilityReport(
+                                  officers: _officers,
+                                  daysOffByOfficer: _daysOffByOfficer,
+                                  monday: _monday,
+                                ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 565,
+                            child: RepaintBoundary(
+                              key: _routesReportKey,
+                              child: Container(
+                                color: Colors.white,
+                                padding: const EdgeInsets.all(12),
+                                child: WeeklyRoutesReport(
+                                  officers: _officers,
+                                  assignmentsByDay: _assignmentsByDay,
+                                  monday: _monday,
+                                ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 760,
+                            child: RepaintBoundary(
+                              key: _reportKey,
+                              child: PersonalWeeklyReport(
+                                officer: officer!,
+                                restByDay: _restByDay,
+                                daysOffByOfficer: _daysOffByOfficer,
+                                restBlocksByDay: _blocksByDay,
+                                monday: _monday,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
     );
   }

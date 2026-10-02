@@ -219,115 +219,128 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   Future<void> _export() async {
-    bool turnos = true;
-    bool asistencia = true;
-    bool recorridos = true;
+    var shareTurns = true;
+    var shareAttendance = true;
+    var shareRoutes = true;
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (dialogContext) {
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final todos = turnos && asistencia && recorridos;
-            return AlertDialog(
-              title: const Text(
-                '¿Qué deseas compartir?',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: kBrandNavy,
-                ),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: todos,
-                    title: const Text(
-                      'Seleccionar todos',
-                      style: TextStyle(fontWeight: FontWeight.w800),
+          builder: (context, setSheetState) {
+            final allSelected = shareTurns && shareAttendance && shareRoutes;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '¿Qué deseas compartir?',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: kBrandNavy,
+                        ),
+                      ),
                     ),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    onChanged: (value) {
-                      final selected = value ?? false;
-                      setDialogState(() {
-                        turnos = selected;
-                        asistencia = selected;
-                        recorridos = selected;
-                      });
-                    },
-                  ),
-                  const Divider(),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: turnos,
-                    title: const Text('Horario de Turnos'),
-                    subtitle: const Text('Turnos de descanso de la semana'),
-                    secondary: const Icon(Icons.bedtime_outlined),
-                    onChanged: (value) => setDialogState(() {
-                      turnos = value ?? false;
-                    }),
-                  ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: asistencia,
-                    title: const Text('Horario de Asistencia'),
-                    subtitle: const Text('Disponibilidad semanal de los oficiales'),
-                    secondary: const Icon(Icons.groups_2_outlined),
-                    onChanged: (value) => setDialogState(() {
-                      asistencia = value ?? false;
-                    }),
-                  ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: recorridos,
-                    title: const Text('Horario de Recorridos'),
-                    subtitle: const Text('Programación semanal de recorridos'),
-                    secondary: const Icon(Icons.route_outlined),
-                    onChanged: (value) => setDialogState(() {
-                      recorridos = value ?? false;
-                    }),
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Selecciona uno o varios reportes para compartirlos en una sola acción.',
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: allSelected,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text(
+                        'Seleccionar todos',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      onChanged: (value) {
+                        final selected = value ?? false;
+                        setSheetState(() {
+                          shareTurns = selected;
+                          shareAttendance = selected;
+                          shareRoutes = selected;
+                        });
+                      },
+                    ),
+                    const Divider(height: 1),
+                    CheckboxListTile(
+                      value: shareTurns,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Turnos'),
+                      subtitle: const Text('Turnos de descanso de la semana'),
+                      onChanged: (value) => setSheetState(
+                        () => shareTurns = value ?? false,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      value: shareAttendance,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Asistencia'),
+                      subtitle: const Text('Disponibilidad semanal de los oficiales'),
+                      onChanged: (value) => setSheetState(
+                        () => shareAttendance = value ?? false,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      value: shareRoutes,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Horario de Recorridos'),
+                      subtitle: const Text('Programación semanal de recorridos'),
+                      onChanged: (value) => setSheetState(
+                        () => shareRoutes = value ?? false,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: !(shareTurns || shareAttendance || shareRoutes)
+                            ? null
+                            : () async {
+                                final reports = <({GlobalKey key, String fileName})>[];
+                                if (shareTurns) {
+                                  reports.add((
+                                    key: _printKey,
+                                    fileName: 'horario_turnos_semanal.png',
+                                  ));
+                                }
+                                if (shareAttendance) {
+                                  reports.add((
+                                    key: _availabilityPrintKey,
+                                    fileName: 'horario_asistencia_semanal.png',
+                                  ));
+                                }
+                                if (shareRoutes) {
+                                  reports.add((
+                                    key: _routesPrintKey,
+                                    fileName: 'horario_recorridos_semanal.png',
+                                  ));
+                                }
+
+                                Navigator.pop(sheetContext);
+                                await ExportService().shareWidgets(
+                                  reports,
+                                  shareText: 'Reportes semanales de Control de Guardias',
+                                );
+                              },
+                        icon: const Icon(Icons.share),
+                        label: const Text('Compartir seleccionados'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton.icon(
-                  onPressed: !(turnos || asistencia || recorridos)
-                      ? null
-                      : () async {
-                          Navigator.pop(dialogContext);
-                          final reports = <({GlobalKey key, String fileName})>[];
-                          if (turnos) {
-                            reports.add((
-                              key: _printKey,
-                              fileName: 'horario_turnos_semanal.png',
-                            ));
-                          }
-                          if (asistencia) {
-                            reports.add((
-                              key: _availabilityPrintKey,
-                              fileName: 'horario_asistencia_semanal.png',
-                            ));
-                          }
-                          if (recorridos) {
-                            reports.add((
-                              key: _routesPrintKey,
-                              fileName: 'horario_recorridos_semanal.png',
-                            ));
-                          }
-                          await ExportService().shareWidgets(
-                            reports,
-                            shareText: 'Horarios semanales',
-                          );
-                        },
-                  icon: const Icon(Icons.share),
-                  label: const Text('Compartir seleccionados'),
-                ),
-              ],
             );
           },
         );

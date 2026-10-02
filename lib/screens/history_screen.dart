@@ -56,6 +56,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     });
   }
 
+  Future<void> _changeWeek(int days) async {
+    setState(() {
+      monday = monday.add(Duration(days: days));
+    });
+    await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -63,19 +70,49 @@ class _HistoryScreenState extends State<HistoryScreen> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          Text(
-            'Semana Activa: ${_fmt(monday)} – ${_fmt(monday.add(const Duration(days: 6)))}',
-            style: const TextStyle(fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _changeWeek(-7),
+                  icon: const Icon(Icons.chevron_left),
+                  label: const Text('Ant.'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: OutlinedButton(
+                  onPressed: () async {
+                    setState(() => monday = _monday(DateTime.now()));
+                    await _load();
+                  },
+                  child: const Text('Semana actual'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _changeWeek(7),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Text('Sig.'),
+                      SizedBox(width: 6),
+                      Icon(Icons.chevron_right),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Semana Anterior: ${_fmt(monday.subtract(const Duration(days: 7)))} – ${_fmt(monday.subtract(const Duration(days: 1)))}',
-            style: const TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'La Semana Activa tiene prioridad. La Semana Anterior solo se usa para desempates.',
-            style: TextStyle(fontStyle: FontStyle.italic),
+          const SizedBox(height: 10),
+          Center(
+            child: Text(
+              'Semana: ${_fmt(monday)} – ${_fmt(monday.add(const Duration(days: 6)))}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
           ),
           const SizedBox(height: 16),
           const Text(

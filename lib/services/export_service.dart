@@ -21,11 +21,9 @@ class ExportService {
     );
   }
 
-  /// Captura varios reportes existentes y los comparte en una sola acción.
-  /// No modifica el contenido ni el diseño de ninguno de los reportes.
   Future<void> shareWidgets(
     List<({GlobalKey key, String fileName})> reports, {
-    String shareText = 'Reportes semanales',
+    required String shareText,
   }) async {
     try {
       final tempDir = await getTemporaryDirectory();
@@ -41,21 +39,20 @@ class ExportService {
 
         final image = await boundary.toImage(pixelRatio: 3.0);
         final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-        if (byteData == null) {
-          debugPrint('No se pudo convertir ${report.fileName} a PNG.');
-          continue;
-        }
+        if (byteData == null) continue;
 
-        final file = File('${tempDir.path}/${report.fileName}');
+        final safeFileName = report.fileName.endsWith('.png')
+            ? report.fileName
+            : '${report.fileName}.png';
+        final file = File('${tempDir.path}/$safeFileName');
         await file.writeAsBytes(byteData.buffer.asUint8List());
         files.add(XFile(file.path));
       }
 
-      if (files.isNotEmpty) {
-        await Share.shareXFiles(files, text: shareText);
-      }
+      if (files.isEmpty) return;
+      await Share.shareXFiles(files, text: shareText);
     } catch (e) {
-      debugPrint('Error al compartir reportes: $e');
+      debugPrint('Error al generar los reportes PNG: $e');
     }
   }
 
