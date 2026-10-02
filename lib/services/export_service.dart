@@ -21,6 +21,44 @@ class ExportService {
     );
   }
 
+  /// Captura varios reportes existentes y los comparte en una sola acción.
+  /// No modifica el contenido ni el diseño de ninguno de los reportes.
+  Future<void> shareWidgets(
+    List<({GlobalKey key, String fileName})> reports, {
+    String shareText = 'Reportes semanales',
+  }) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final files = <XFile>[];
+
+      for (final report in reports) {
+        final boundary = report.key.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+        if (boundary == null) {
+          debugPrint('No se encontró el área de impresión para ${report.fileName}.');
+          continue;
+        }
+
+        final image = await boundary.toImage(pixelRatio: 3.0);
+        final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        if (byteData == null) {
+          debugPrint('No se pudo convertir ${report.fileName} a PNG.');
+          continue;
+        }
+
+        final file = File('${tempDir.path}/${report.fileName}');
+        await file.writeAsBytes(byteData.buffer.asUint8List());
+        files.add(XFile(file.path));
+      }
+
+      if (files.isNotEmpty) {
+        await Share.shareXFiles(files, text: shareText);
+      }
+    } catch (e) {
+      debugPrint('Error al compartir reportes: $e');
+    }
+  }
+
   Future<void> shareWidget(
     GlobalKey key, {
     required String fileName,
