@@ -605,7 +605,7 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                     CheckboxListTile(
                       value: sharePersonal,
                       controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text('Horario Personal'),
+                      title: Text('Horario personal de $safeName'),
                       subtitle: const Text('Reporte del oficial seleccionado'),
                       onChanged: (value) => setSheetState(
                         () => sharePersonal = value ?? false,
@@ -819,7 +819,6 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                         ),
                         const SizedBox(height: 12),
                         RepaintBoundary(
-                          key: _reportKey,
                           child: Container(
                             color: Colors.white,
                             padding: const EdgeInsets.all(4),
@@ -883,6 +882,19 @@ class _PersonalScheduleScreenState extends State<PersonalScheduleScreen> {
                                   assignmentsByDay: _assignmentsByDay,
                                   monday: _monday,
                                 ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 760,
+                            child: RepaintBoundary(
+                              key: _reportKey,
+                              child: PersonalWeeklyReport(
+                                officer: officer!,
+                                restByDay: _restByDay,
+                                daysOffByOfficer: _daysOffByOfficer,
+                                restBlocksByDay: _blocksByDay,
+                                monday: _monday,
                               ),
                             ),
                           ),
