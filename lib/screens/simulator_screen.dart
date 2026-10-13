@@ -12,9 +12,7 @@ class SimulatorScreen extends StatefulWidget {
 }
 
 class _SimulatorScreenState extends State<SimulatorScreen> {
-  final _hoursController = TextEditingController(text: '2');
-  final _minutesController = TextEditingController(text: '0');
-  final _startController = TextEditingController(text: '21:00');
+  final Map<int, List<RestBlock>> _simulationProfiles = {};
   List<Officer> _activeOfficers = [];
   int _officerCount = 4;
   bool _loading = true;
@@ -41,9 +39,6 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
 
   @override
   void dispose() {
-    _hoursController.dispose();
-    _minutesController.dispose();
-    _startController.dispose();
     super.dispose();
   }
 
@@ -57,68 +52,59 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       _officerCount = officers.length < 4 ? officers.length : 4;
       _loading = false;
     });
-  }
-
-  int _minuteOf(String value) {
-    final parts = value.trim().split(':');
-    if (parts.length != 2) throw const FormatException('Usa el formato HH:MM para la hora de inicio.');
-    final h = int.tryParse(parts[0]);
-    final m = int.tryParse(parts[1]);
-    if (h == null || m == null || h < 0 || h > 23 || m < 0 || m > 59) {
-      throw const FormatException('La hora de inicio debe estar entre 00:00 y 23:59.');
-    }
-    return h * 60 + m;
-  }
-
-  String _clock(int minutes) {
-    final v = minutes % (24 * 60);
-    return '${(v ~/ 60).toString().padLeft(2, '0')}:${(v % 60).toString().padLeft(2, '0')}';
-  }
-
-  List<RestBlock> _makeBlocks(int count, int start, int duration) {
-    final blockCount = count.clamp(1, 3).toInt();
-    final capacities = switch (count) {
-      1 => [1],
-      2 => [1, 1],
-      3 => [1, 1, 1],
-      4 => [1, 1, 2],
-      5 => [1, 2, 2],
-      _ => List<int>.filled(blockCount, count ~/ blockCount)
-          .asMap().entries.map((e) => e.value + (e.key < count % blockCount ? 1 : 0)).toList(),
-    };
-    return List.generate(blockCount, (i) {
-      final from = start + i * duration;
-      return RestBlock(
-        number: i + 1,
-        start: _clock(from),
-        end: _clock(from + duration),
-        capacity: capacities[i],
-      );
+    // Copiar perfiles reales a memoria; nunca se escriben cambios del simulador en la BD.
+    final db = AppDb.instance;
+    final profiles = await db.restProfiles(minOfficers: 1, maxOfficers: 12);
+    if (!mounted) return;
+    setState(() {
+      for (final profile in profiles) {
+        _simulationProfiles[profile.officerCount] = profile.blocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
+      }
     });
+  }
+
+  Future<TimeOfDay?> _pickTime(String value) async {
+    final p = value.split(':');
+    return showTimePicker(context: context, initialTime: TimeOfDay(hour: int.tryParse(p[0]) ?? 0, minute: int.tryParse(p[1]) ?? 0));
+  }
+
+  String _fmtTime(TimeOfDay t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _editSimBlock(RestBlock block) async {
+    var start = block.start;
+    var end = block.end;
+    var capacity = block.capacity;
+    final result = await showDialog<List<dynamic>>(context: context, builder: (_) => StatefulBuilder(builder: (context, setDialog) => AlertDialog(
+      title: Text('Editar ${block.label} (simulación)'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(title: const Text('Hora de inicio'), subtitle: Text(start), trailing: const Icon(Icons.schedule), onTap: () async { final t = await _pickTime(start); if (t != null) setDialog(() => start = _fmtTime(t)); }),
+        ListTile(title: const Text('Hora de finalización'), subtitle: Text(end), trailing: const Icon(Icons.schedule), onTap: () async { final t = await _pickTime(end); if (t != null) setDialog(() => end = _fmtTime(t)); }),
+        Row(children: [const Expanded(child: Text('Máximo de oficiales')), IconButton(onPressed: capacity > 0 ? () => setDialog(() => capacity--) : null, icon: const Icon(Icons.remove_circle_outline)), Text('$capacity'), IconButton(onPressed: capacity < 99 ? () => setDialog(() => capacity++) : null, icon: const Icon(Icons.add_circle_outline))]),
+        const Text('Estos cambios solo afectan las pruebas de esta sesión.', style: TextStyle(fontSize: 12)),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(context, [start, end, capacity]), child: const Text('Aplicar'))],
+    )));
+    if (result == null || !mounted) return;
+    setState(() { final blocks = _simulationProfiles[_officerCount] ?? []; final i = blocks.indexWhere((b) => b.number == block.number); if (i >= 0) blocks[i] = RestBlock(number: block.number, start: result[0] as String, end: result[1] as String, capacity: result[2] as int); _simulationProfiles[_officerCount] = blocks; });
+  }
+
+  void _changeSimBlockCount(int delta) {
+    final blocks = List<RestBlock>.from(_simulationProfiles[_officerCount] ?? []);
+    final target = (blocks.length + delta).clamp(1, _officerCount).toInt();
+    if (target == blocks.length) return;
+    if (target < blocks.length) { blocks.removeRange(target, blocks.length); }
+    else { for (var n = blocks.length + 1; n <= target; n++) { blocks.add(RestBlock(number: n, start: '00:00', end: '01:00', capacity: 1)); } }
+    setState(() => _simulationProfiles[_officerCount] = blocks);
   }
 
   Future<void> _generate() async {
     FocusScope.of(context).unfocus();
-    final hours = int.tryParse(_hoursController.text.trim());
-    final minutes = int.tryParse(_minutesController.text.trim());
-    if (hours == null || minutes == null || hours < 0 || minutes < 0 || minutes > 59 || (hours == 0 && minutes == 0)) {
-      setState(() => _error = 'Indica una duración válida. Las horas deben ser 0 o más y los minutos entre 0 y 59.');
-      return;
-    }
     if (_officerCount < 1 || _officerCount > _activeOfficers.length) {
       setState(() => _error = 'No hay suficientes oficiales activos para esa simulación.');
       return;
     }
-    final duration = hours * 60 + minutes;
-    if (duration * _officerCount.clamp(1, 3) > 24 * 60) {
-      setState(() => _error = 'La duración por bloque es demasiado grande para distribuir los descansos dentro de un día.');
-      return;
-    }
-    int start;
-    try {
-      start = _minuteOf(_startController.text);
-    } on FormatException catch (e) {
-      setState(() => _error = e.message);
+    if ((_simulationProfiles[_officerCount] ?? []).isEmpty) {
+      setState(() => _error = 'Configura al menos un bloque de descanso para este perfil.');
       return;
     }
 
@@ -148,7 +134,8 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
           generated[dateKey] = _SimulatedDay(date: date, assignments: const [], rests: const {}, blocks: const [], message: 'No hay oficiales disponibles.');
           continue;
         }
-        final blocks = _makeBlocks(availableCount, start, duration);
+        final sourceBlocks = _simulationProfiles[availableCount] ?? (await db.restProfile(availableCount)).blocks;
+        final blocks = sourceBlocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
         final plan = engine.generate(
           date: dateKey,
           active: selected,
@@ -186,14 +173,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
         generated[dateKey] = _SimulatedDay(date: date, assignments: plan.assignments, rests: plan.restByOfficer, blocks: blocks);
       }
       if (!mounted) return;
-      final durationLabel = hours > 0 && minutes > 0
-          ? '${hours} h ${minutes} min'
-          : hours > 0
-              ? '${hours} h'
-              : '${minutes} min';
+      final profileLabel = '${_simulationProfiles[_officerCount]?.length ?? 0} bloques configurados';
       setState(() {
         _scenarios.insert(0, _SimulatedScenario(
-          title: '$_officerCount oficiales · $durationLabel · inicio ${_startController.text.trim()}',
+          title: '$_officerCount oficiales · $profileLabel',
           weekStart: _monday,
           days: generated,
         ));
@@ -246,15 +229,21 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         onChanged: (v) => setState(() { if (v != null) { _officerCount = v; } }),
                       ),
                       const SizedBox(height: 12),
-                      const Text('Duración de cada descanso', style: TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 8),
                       Row(children: [
-                        Expanded(child: TextField(controller: _hoursController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Horas', hintText: '0'))),
-                        const SizedBox(width: 10),
-                        Expanded(child: TextField(controller: _minutesController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Minutos', hintText: '0'))),
+                        const Expanded(child: Text('Bloques de descanso', style: TextStyle(fontWeight: FontWeight.w700))),
+                        IconButton(tooltip: 'Quitar bloque', onPressed: (_simulationProfiles[_officerCount]?.length ?? 0) > 1 ? () => _changeSimBlockCount(-1) : null, icon: const Icon(Icons.remove_circle_outline)),
+                        Text('${_simulationProfiles[_officerCount]?.length ?? 0}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                        IconButton(tooltip: 'Agregar bloque', onPressed: (_simulationProfiles[_officerCount]?.length ?? 0) < _officerCount ? () => _changeSimBlockCount(1) : null, icon: const Icon(Icons.add_circle_outline)),
                       ]),
-                      const SizedBox(height: 12),
-                      TextField(controller: _startController, keyboardType: TextInputType.datetime, decoration: const InputDecoration(labelText: 'Hora de inicio del primer bloque', hintText: '21:00', helperText: 'Formato 24 horas, por ejemplo 21:00')),
+                      const Text('Se copia la configuración original del perfil seleccionado. Puedes editar cada horario y capacidad aquí sin cambiar Configuración.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      const SizedBox(height: 8),
+                      ...(_simulationProfiles[_officerCount] ?? []).map((block) => Card(child: ListTile(
+                        title: Text(block.label),
+                        subtitle: Text('${block.start} – ${block.end} · Máximo de oficiales: ${block.capacity}'),
+                        trailing: const Icon(Icons.edit),
+                        onTap: () => _editSimBlock(block),
+                      ))),
                       const SizedBox(height: 8),
                       Row(children: [
                         const Icon(Icons.date_range, color: kBrandNavy),
@@ -266,7 +255,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         IconButton(tooltip: 'Semana siguiente', onPressed: () => _changeWeek(1), icon: const Icon(Icons.chevron_right)),
                       ]),
                       const SizedBox(height: 8),
-                      const Text('Los bloques se crean consecutivamente con la duración indicada. El sistema comprobará si los recorridos pueden asignarse sin coincidir con los descansos.', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                      const Text('Se utiliza el motor original de asignación y los bloques configurados para cada cantidad de oficiales. Los cambios de esta pantalla son temporales.', style: TextStyle(color: Colors.black54, fontSize: 12)),
                       const SizedBox(height: 14),
                       FilledButton.icon(onPressed: canSimulate && !_generating ? _generate : null, icon: _generating ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.play_arrow), label: Text(_generating ? 'Generando prueba…' : 'Generar simulación')),
                       if (_error != null) ...[
