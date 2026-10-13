@@ -8,6 +8,7 @@ import 'history_screen.dart';
 import 'about_screen.dart';
 import 'attendance_screen.dart';
 import 'personal_schedule_screen.dart';
+import 'simulator_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -192,6 +193,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       context,
                       MaterialPageRoute(
                         builder: (_) => const HistoryScreen(),
+                      ),
+                    );
+                    _load();
+                  },
+                ),
+                _quickAction(
+                  Icons.science,
+                  'Simulador',
+                  const Color(0xFF526D82),
+                  () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SimulatorScreen(),
                       ),
                     );
                     _load();
