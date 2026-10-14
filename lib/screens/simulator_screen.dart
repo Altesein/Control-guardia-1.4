@@ -15,6 +15,9 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
   final Map<int, List<RestBlock>> _simulationProfiles = {};
   List<Officer> _activeOfficers = [];
   int _officerCount = 4;
+  int _profileCount = 4;
+  final Map<int, Set<int>> _simDaysOff = {};
+  final Map<String, Set<int>> _simAbsences = {};
   bool _loading = true;
   bool _generating = false;
   DateTime _monday = _weekMonday(DateTime.now());
@@ -52,15 +55,32 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       _officerCount = officers.length < 4 ? officers.length : 4;
       _loading = false;
     });
-    // Copiar perfiles reales a memoria; nunca se escriben cambios del simulador en la BD.
+    // Copiar perfiles y días libres a memoria; el simulador nunca guarda cambios en la BD.
     final db = AppDb.instance;
+    final daysOff = await db.weeklyDaysOffForOfficers(officers.map((o) => o.id!).toList());
+    _simDaysOff
+      ..clear()
+      ..addAll({for (final entry in daysOff.entries) entry.key: Set<int>.from(entry.value)});
     final profiles = await db.restProfiles(minOfficers: 1, maxOfficers: 12);
     if (!mounted) return;
     setState(() {
       for (final profile in profiles) {
         _simulationProfiles[profile.officerCount] = profile.blocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
       }
+      _profileCount = _officerCount.clamp(1, 12);
     });
+    await _loadWeekAbsences(_monday);
+  }
+
+  Future<void> _loadWeekAbsences(DateTime monday) async {
+    final db = AppDb.instance;
+    final updates = <String, Set<int>>{};
+    for (var i = 0; i < 7; i++) {
+      final date = monday.add(Duration(days: i));
+      final key = _iso(date);
+      if (!_simAbsences.containsKey(key)) updates[key] = await db.absentIds(key);
+    }
+    if (mounted && updates.isNotEmpty) setState(() => _simAbsences.addAll(updates));
   }
 
   Future<TimeOfDay?> _pickTime(String value) async {
@@ -85,16 +105,41 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(context, [start, end, capacity]), child: const Text('Aplicar'))],
     )));
     if (result == null || !mounted) return;
-    setState(() { final blocks = _simulationProfiles[_officerCount] ?? []; final i = blocks.indexWhere((b) => b.number == block.number); if (i >= 0) blocks[i] = RestBlock(number: block.number, start: result[0] as String, end: result[1] as String, capacity: result[2] as int); _simulationProfiles[_officerCount] = blocks; });
+    setState(() { final blocks = _simulationProfiles[_profileCount] ?? []; final i = blocks.indexWhere((b) => b.number == block.number); if (i >= 0) blocks[i] = RestBlock(number: block.number, start: result[0] as String, end: result[1] as String, capacity: result[2] as int); _simulationProfiles[_profileCount] = blocks; });
   }
 
   void _changeSimBlockCount(int delta) {
-    final blocks = List<RestBlock>.from(_simulationProfiles[_officerCount] ?? []);
-    final target = (blocks.length + delta).clamp(1, _officerCount).toInt();
+    final blocks = List<RestBlock>.from(_simulationProfiles[_profileCount] ?? []);
+    final target = (blocks.length + delta).clamp(1, _profileCount).toInt();
     if (target == blocks.length) return;
     if (target < blocks.length) { blocks.removeRange(target, blocks.length); }
     else { for (var n = blocks.length + 1; n <= target; n++) { blocks.add(RestBlock(number: n, start: '00:00', end: '01:00', capacity: 1)); } }
-    setState(() => _simulationProfiles[_officerCount] = blocks);
+    setState(() => _simulationProfiles[_profileCount] = blocks);
+  }
+
+  Future<void> _editDaysOff(Officer officer) async {
+    if (officer.id == null) return;
+    final days = Set<int>.from(_simDaysOff[officer.id!] ?? {});
+    final result = await showDialog<Set<int>>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (context, setDialog) => AlertDialog(
+      title: Text('Días libres · ${officer.name}'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: List.generate(7, (i) {
+        final weekday = i + 1;
+        return CheckboxListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(_dayNames[i]), value: days.contains(weekday), onChanged: (v) => setDialog(() { if (v == true) { days.add(weekday); } else { days.remove(weekday); } }));
+      }))),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(dialogContext, days), child: const Text('Aplicar'))],
+    )));
+    if (result != null && mounted) setState(() => _simDaysOff[officer.id!] = Set<int>.from(result));
+  }
+
+  Future<void> _editDayAbsences(DateTime date) async {
+    final key = _iso(date);
+    final absent = Set<int>.from(_simAbsences[key] ?? {});
+    final result = await showDialog<Set<int>>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (context, setDialog) => AlertDialog(
+      title: Text('Ausencias · ${_dayNames[date.weekday - 1]} ${date.day}/${date.month}'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: _activeOfficers.take(_officerCount).map((officer) => CheckboxListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(officer.name), subtitle: Text((_simDaysOff[officer.id] ?? {}).contains(date.weekday) ? 'Ya tiene día libre' : 'Disponible según días libres'), value: absent.contains(officer.id), onChanged: (v) => setDialog(() { if (v == true) { absent.add(officer.id!); } else { absent.remove(officer.id); } }))).toList())),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(dialogContext, absent), child: const Text('Aplicar'))],
+    )));
+    if (result != null && mounted) setState(() => _simAbsences[key] = Set<int>.from(result));
   }
 
   Future<void> _generate() async {
@@ -116,7 +161,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
     try {
       final db = AppDb.instance;
       final selected = _activeOfficers.take(_officerCount).toList();
-      final daysOff = await db.weeklyDaysOffForOfficers(selected.map((o) => o.id!).toList());
+      final daysOff = <int, Set<int>>{for (final o in selected) o.id!: Set<int>.from(_simDaysOff[o.id!] ?? {})};
       final previousStats = await db.weeklyStats(_iso(_monday.subtract(const Duration(days: 7))));
       final currentStats = <int, WeeklyStats>{for (final o in selected) o.id!: const WeeklyStats()};
       final generated = <String, _SimulatedDay>{};
@@ -125,7 +170,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       for (var index = 0; index < 7; index++) {
         final date = _monday.add(Duration(days: index));
         final dateKey = _iso(date);
-        final absent = await db.absentIds(dateKey);
+        final absent = Set<int>.from(_simAbsences[dateKey] ?? {});
         final dayOffIds = selected
             .where((o) => daysOff[o.id]?.contains(date.weekday) ?? false)
             .map((o) => o.id!).toSet();
@@ -134,8 +179,14 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
           generated[dateKey] = _SimulatedDay(date: date, assignments: const [], rests: const {}, blocks: const [], message: 'No hay oficiales disponibles.');
           continue;
         }
-        final sourceBlocks = _simulationProfiles[availableCount] ?? (await db.restProfile(availableCount)).blocks;
-        final blocks = sourceBlocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
+        final blocks = List<RestBlock>.from(_simulationProfiles[availableCount] ?? []);
+        if (blocks.isEmpty) {
+          throw StateError('Falta configurar el perfil de descansos para $availableCount oficiales disponibles. Selecciona ese perfil en «Perfil de descansos» y ajusta sus bloques dentro del simulador.');
+        }
+        final totalCapacity = blocks.fold<int>(0, (sum, block) => sum + block.capacity);
+        if (totalCapacity < availableCount) {
+          throw StateError('El perfil de $availableCount oficiales tiene capacidad $totalCapacity, pero necesita al menos $availableCount. En «Perfil de descansos», selecciona $availableCount y aumenta la capacidad de sus bloques. Los cambios son temporales.');
+        }
         final plan = engine.generate(
           date: dateKey,
           active: selected,
@@ -192,10 +243,9 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
   }
 
   Future<void> _changeWeek(int delta) async {
-    setState(() {
-      _monday = _monday.add(Duration(days: delta * 7));
-      _error = null;
-    });
+    final next = _monday.add(Duration(days: delta * 7));
+    setState(() { _monday = next; _error = null; });
+    await _loadWeekAbsences(next);
   }
 
   @override
@@ -229,16 +279,26 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         onChanged: (v) => setState(() { if (v != null) { _officerCount = v; } }),
                       ),
                       const SizedBox(height: 12),
+                      const Text('Días libres de los oficiales', style: TextStyle(fontWeight: FontWeight.w800, color: kBrandNavy)),
+                      const Text('Edita los días libres solo para esta prueba.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      ..._activeOfficers.take(_officerCount).map((officer) => Card(child: ListTile(leading: const Icon(Icons.event_busy), title: Text(officer.name), subtitle: Text((((_simDaysOff[officer.id] ?? {}).toList()..sort()).isEmpty ? 'Sin días libres' : ((_simDaysOff[officer.id] ?? {}).toList()..sort()).map((d) => _dayNames[d - 1]).join(', '))), trailing: const Icon(Icons.edit), onTap: () => _editDaysOff(officer)))),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        value: _profileCount.clamp(1, 12),
+                        decoration: const InputDecoration(labelText: 'Perfil de descansos (oficiales disponibles)'),
+                        items: List.generate(12, (i) => i + 1).map((n) => DropdownMenuItem(value: n, child: Text('$n ${n == 1 ? 'oficial' : 'oficiales'}'))).toList(),
+                        onChanged: (v) => setState(() { if (v != null) _profileCount = v; }),
+                      ),
                       const SizedBox(height: 8),
                       Row(children: [
                         const Expanded(child: Text('Bloques de descanso', style: TextStyle(fontWeight: FontWeight.w700))),
-                        IconButton(tooltip: 'Quitar bloque', onPressed: (_simulationProfiles[_officerCount]?.length ?? 0) > 1 ? () => _changeSimBlockCount(-1) : null, icon: const Icon(Icons.remove_circle_outline)),
-                        Text('${_simulationProfiles[_officerCount]?.length ?? 0}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        IconButton(tooltip: 'Agregar bloque', onPressed: (_simulationProfiles[_officerCount]?.length ?? 0) < _officerCount ? () => _changeSimBlockCount(1) : null, icon: const Icon(Icons.add_circle_outline)),
+                        IconButton(tooltip: 'Quitar bloque', onPressed: (_simulationProfiles[_profileCount]?.length ?? 0) > 1 ? () => _changeSimBlockCount(-1) : null, icon: const Icon(Icons.remove_circle_outline)),
+                        Text('${_simulationProfiles[_profileCount]?.length ?? 0}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                        IconButton(tooltip: 'Agregar bloque', onPressed: (_simulationProfiles[_profileCount]?.length ?? 0) < _profileCount ? () => _changeSimBlockCount(1) : null, icon: const Icon(Icons.add_circle_outline)),
                       ]),
-                      const Text('Se copia la configuración original del perfil seleccionado. Puedes editar cada horario y capacidad aquí sin cambiar Configuración.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      const Text('Puedes editar el perfil de cada cantidad de oficiales disponibles. Así se corrigen también los días en que algunos descansan o están ausentes.', style: TextStyle(fontSize: 12, color: Colors.black54)),
                       const SizedBox(height: 8),
-                      ...(_simulationProfiles[_officerCount] ?? []).map((block) => Card(child: ListTile(
+                      ...(_simulationProfiles[_profileCount] ?? []).map((block) => Card(child: ListTile(
                         title: Text(block.label),
                         subtitle: Text('${block.start} – ${block.end} · Máximo de oficiales: ${block.capacity}'),
                         trailing: const Icon(Icons.edit),
@@ -254,6 +314,14 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         Text('${_date(_monday)}', style: const TextStyle(fontWeight: FontWeight.w700)),
                         IconButton(tooltip: 'Semana siguiente', onPressed: () => _changeWeek(1), icon: const Icon(Icons.chevron_right)),
                       ]),
+                      const SizedBox(height: 4),
+                      const Align(alignment: Alignment.centerLeft, child: Text('Ausencias por día', style: TextStyle(fontWeight: FontWeight.w800))),
+                      const SizedBox(height: 4),
+                      Wrap(spacing: 6, runSpacing: 6, children: List.generate(7, (i) {
+                        final date = _monday.add(Duration(days: i));
+                        final count = (_simAbsences[_iso(date)] ?? {}).length;
+                        return OutlinedButton(onPressed: () => _editDayAbsences(date), child: Text('${_dayNames[i].substring(0, 3)} ${date.day} · $count'));
+                      })),
                       const SizedBox(height: 8),
                       const Text('Se utiliza el motor original de asignación y los bloques configurados para cada cantidad de oficiales. Los cambios de esta pantalla son temporales.', style: TextStyle(color: Colors.black54, fontSize: 12)),
                       const SizedBox(height: 14),
