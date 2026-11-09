@@ -1,19 +1,3 @@
-name: Verificar y construir APK
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: flutter-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   verify:
     name: Verificar código completo
@@ -29,41 +13,89 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Mostrar versiones
-        run: |
-          flutter --version
-          dart --version
-
-      - name: Generar plataforma Android si no existe
+      - name: Preparar proyecto y carpeta de diagnóstico
         run: |
           set -euo pipefail
-
+          mkdir -p diagnostics
+          flutter --version > diagnostics/versiones.txt 2>&1
+          dart --version >> diagnostics/versiones.txt 2>&1
           if [ ! -d android ]; then
             flutter create --platforms=android --no-pub .
           fi
-
-          rm -f test/widget_test.dart
-
           sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
             android/app/src/main/AndroidManifest.xml
 
       - name: Obtener dependencias
-        run: flutter pub get
+        id: dependencies
+        continue-on-error: true
+        run: |
+          set +e
+          flutter pub get > diagnostics/01-dependencias.log 2>&1
+          code=$?
+          echo "$code" > diagnostics/01-dependencias.exit
+          cat diagnostics/01-dependencias.log
+          exit 0
 
-      - name: Formatear todos los Dart
-        run: dart format lib test
+      - name: Formatear archivos Dart
+        id: format
+        continue-on-error: true
+        run: |
+          set +e
+          dart format lib test > diagnostics/02-formato.log 2>&1
+          code=$?
+          echo "$code" > diagnostics/02-formato.exit
+          cat diagnostics/02-formato.log
+          exit 0
 
-      - name: Analizar todo el proyecto
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Analizar proyecto
+        id: analyze
+        continue-on-error: true
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos --no-fatal-warnings > diagnostics/03-analisis.log 2>&1
+          code=$?
+          echo "$code" > diagnostics/03-analisis.exit
+          cat diagnostics/03-analisis.log
+          exit 0
 
-      - name: Ejecutar todas las pruebas
-        run: flutter test
+      - name: Ejecutar pruebas
+        id: tests
+        continue-on-error: true
+        run: |
+          set +e
+          flutter test > diagnostics/04-pruebas.log 2>&1
+          code=$?
+          echo "$code" > diagnostics/04-pruebas.exit
+          cat diagnostics/04-pruebas.log
+          exit 0
+
+      - name: Subir diagnóstico de verificación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Diagnostico-Control-de-Guardia
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Marcar verificación fallida si hubo errores
+        if: always()
+        run: |
+          set -euo pipefail
+          failed=0
+          for f in diagnostics/*.exit; do
+            [ -f "$f" ] || continue
+            if [ "$(cat "$f")" != "0" ]; then failed=1; fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "La verificación encontró errores. Descarga el artefacto Diagnostico-Control-de-Guardia."
+            exit 1
+          fi
 
   build:
     name: Construir APK
     needs: verify
     runs-on: ubuntu-latest
-
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
@@ -75,21 +107,13 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Mostrar versiones
-        run: |
-          flutter --version
-          dart --version
-
-      - name: Generar plataforma Android si no existe
+      - name: Preparar Android
         run: |
           set -euo pipefail
-
+          mkdir -p diagnostics
           if [ ! -d android ]; then
             flutter create --platforms=android --no-pub .
           fi
-
-          rm -f test/widget_test.dart
-
           sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
             android/app/src/main/AndroidManifest.xml
 
@@ -98,32 +122,18 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "ERROR: El secreto KEYSTORE_BASE64 no está configurado."
             echo "No se generará una clave nueva porque eso cambiaría la firma de la aplicación."
             exit 1
           fi
-
           mkdir -p android/app
-
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/key.jks
-
           if [ ! -s android/app/key.jks ]; then
             echo "ERROR: El archivo android/app/key.jks quedó vacío."
             exit 1
           fi
-
-          echo "Verificando keystore..."
-
-          keytool -list \
-            -keystore android/app/key.jks \
-            -storepass 123456 \
-            -alias controlkey \
-            >/dev/null
-
-          echo "Keystore válido encontrado."
-
+          keytool -list -keystore android/app/key.jks -storepass 123456 -alias controlkey >/dev/null
           cat << 'EOF' > android/key.properties
           storePassword=123456
           keyPassword=123456
@@ -131,25 +141,44 @@ jobs:
           storeFile=key.jks
           EOF
 
-          echo "key.properties creado correctamente."
-
-      - name: Obtener dependencias
-        run: flutter pub get
-
-      - name: Construir APK release
-        run: flutter build apk --release
+      - name: Obtener dependencias y construir APK
+        run: |
+          set +e
+          flutter pub get > diagnostics/05-build.log 2>&1
+          dep_code=$?
+          if [ "$dep_code" -eq 0 ]; then
+            flutter build apk --release >> diagnostics/05-build.log 2>&1
+            build_code=$?
+          else
+            build_code=99
+          fi
+          echo "pub_get_exit=$dep_code" >> diagnostics/05-build.log
+          echo "build_exit=$build_code" >> diagnostics/05-build.log
+          cat diagnostics/05-build.log
+          if [ "$dep_code" -ne 0 ] || [ "$build_code" -ne 0 ]; then exit 1; fi
 
       - name: Renombrar APK para entrega
+        if: success()
         run: |
           set -euo pipefail
           cp build/app/outputs/flutter-apk/app-release.apk \
-            build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
-          ls -lh build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+            build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.3.apk
+          ls -lh build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.3.apk
 
       - name: Guardar APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Control-de-Guardia-v1.0.2
-          path: build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+          name: Control-de-Guardia-v1.0.3
+          path: build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.3.apk
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Subir registro de compilación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Diagnostico-Compilacion-Control-de-Guardia
+          path: diagnostics/
+          if-no-files-found: warn
           retention-days: 14
