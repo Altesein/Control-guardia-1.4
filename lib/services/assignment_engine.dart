@@ -22,6 +22,8 @@ class AssignmentEngine {
     required Map<int, WeeklyStats> currentWeekStats,
     required Map<int, WeeklyStats> previousWeekStats,
     required List<RestBlock> restBlocks,
+    Map<int, int> generalRestPreferences = const {},
+    Map<int, Map<int, int>> personalRestPreferences = const {},
   }) {
     final available = active
         .where((o) =>
@@ -41,6 +43,8 @@ class AssignmentEngine {
       sizeOptions,
       currentWeekStats,
       previousWeekStats,
+      generalRestPreferences,
+      personalRestPreferences,
     );
 
     final weeklyRoutes = <int, int>{
@@ -255,6 +259,8 @@ class AssignmentEngine {
     List<List<int>> sizeOptions,
     Map<int, WeeklyStats> current,
     Map<int, WeeklyStats> previous,
+    Map<int, int> generalPreferences,
+    Map<int, Map<int, int>> personalPreferences,
   ) {
     final candidates = <Map<int, int>>[];
 
@@ -277,8 +283,8 @@ class AssignmentEngine {
     }
 
     candidates.sort((a, b) {
-      final sa = _restFairnessScore(a, current, previous);
-      final sb = _restFairnessScore(b, current, previous);
+      final sa = _restFairnessScore(a, current, previous, generalPreferences, personalPreferences);
+      final sb = _restFairnessScore(b, current, previous, generalPreferences, personalPreferences);
       for (var i = 0; i < sa.length; i++) {
         if (sa[i] != sb[i]) return sa[i].compareTo(sb[i]);
       }
@@ -292,17 +298,29 @@ class AssignmentEngine {
     Map<int, int> assignment,
     Map<int, WeeklyStats> current,
     Map<int, WeeklyStats> previous,
+    Map<int, int> generalPreferences,
+    Map<int, Map<int, int>> personalPreferences,
   ) {
+    final preferenceRanks = <int>[];
+    for (final e in assignment.entries) {
+      final personal = personalPreferences[e.key]?[e.value];
+      preferenceRanks.add(personal ?? generalPreferences[e.value] ?? e.value);
+    }
+    preferenceRanks.sort();
+    final groupPreferenceTotal = preferenceRanks.fold<int>(0, (sum, rank) => sum + rank);
+    final groupWorstPreference = preferenceRanks.isEmpty ? 0 : preferenceRanks.last;
     final values = <int>[];
     for (final e in assignment.entries) {
       values.add(current[e.key]?.restCount(e.value) ?? 0);
     }
     values.sort();
-    final previousValues = assignment.entries
-        .map((e) => previous[e.key]?.restCount(e.value) ?? 0)
-        .toList()
-      ..sort();
-    return [...values, ...previousValues];
+    final orderedIds = assignment.keys.toList()..sort();
+    // Keep officer identity in this tie-breaker so the preferred assignment
+    // alternates between equally ranked officers across weeks.
+    final previousValues = orderedIds
+        .map((id) => previous[id]?.restCount(assignment[id]!) ?? 0)
+        .toList();
+    return [groupPreferenceTotal, groupWorstPreference, ...values, ...previousValues];
   }
 
   void _combinations(

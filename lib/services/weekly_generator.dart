@@ -57,6 +57,11 @@ class WeeklyGenerator {
       blocksByDay[iso] = profile.blocks;
       profilesByDay[iso] = availableCount;
 
+      final generalPreferences = await db.generalRestPreferences(availableCount);
+      final personalPreferences = <int, Map<int, int>>{
+        for (final officer in active)
+          if (officer.restPreferences.isNotEmpty) officer.id!: officer.restPreferences,
+      };
       final plan = engine.generate(
         date: iso,
         active: active,
@@ -65,6 +70,8 @@ class WeeklyGenerator {
         currentWeekStats: currentStats,
         previousWeekStats: previousStats,
         restBlocks: profile.blocks,
+        generalRestPreferences: generalPreferences,
+        personalRestPreferences: personalPreferences,
       );
 
       final forbiddenIds = {...dayOffIds, ...absent};

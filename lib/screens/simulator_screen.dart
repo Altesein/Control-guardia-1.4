@@ -13,6 +13,8 @@ class SimulatorScreen extends StatefulWidget {
 
 class _SimulatorScreenState extends State<SimulatorScreen> {
   final Map<int, List<RestBlock>> _simulationProfiles = {};
+  final Map<int, Map<int, int>> _simGeneralPreferences = {};
+  final Map<int, Map<int, int>> _simPersonalPreferences = {};
   List<Officer> _activeOfficers = [];
   int _officerCount = 4;
   int _profileCount = 4;
@@ -62,12 +64,19 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       ..clear()
       ..addAll({for (final entry in daysOff.entries) entry.key: Set<int>.from(entry.value)});
     final profiles = await db.restProfiles(minOfficers: 1, maxOfficers: 12);
+    final generalPreferences = <int, Map<int, int>>{};
+    for (final profile in profiles) {
+      generalPreferences[profile.officerCount] = await db.generalRestPreferences(profile.officerCount);
+    }
     if (!mounted) return;
     setState(() {
       for (final profile in profiles) {
         _simulationProfiles[profile.officerCount] = profile.blocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
+        _simGeneralPreferences[profile.officerCount] = Map<int, int>.from(generalPreferences[profile.officerCount] ?? {});
       }
       _profileCount = _officerCount.clamp(1, 12);
+      _simPersonalPreferences.clear();
+      for (final officer in officers) { if (officer.restPreferences.isNotEmpty && officer.id != null) _simPersonalPreferences[officer.id!] = Map<int, int>.from(officer.restPreferences); }
     });
     await _loadWeekAbsences(_monday);
   }
@@ -142,6 +151,25 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
     if (result != null && mounted) setState(() => _simAbsences[key] = Set<int>.from(result));
   }
 
+  Future<void> _editSimPersonalPreferences(Officer officer) async {
+    final prefs = Map<int, int>.from(_simPersonalPreferences[officer.id] ?? {});
+    final maxBlocks = _simulationProfiles.values.fold<int>(0, (max, list) => list.length > max ? list.length : max);
+    final result = await showDialog<Map<int, int>>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (context, setDialog) => AlertDialog(
+      title: Text('Preferencias · ${officer.name}'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('Si eliges «General», se aplicará la preferencia general del perfil correspondiente.'),
+        for (var block = 1; block <= (maxBlocks == 0 ? 3 : maxBlocks); block++) Row(children: [Expanded(child: Text('Turno $block')), DropdownButton<int?>(value: prefs[block], hint: const Text('General'), items: [const DropdownMenuItem<int?>(value: null, child: Text('General')), for (var rank = 1; rank <= 12; rank++) DropdownMenuItem<int?>(value: rank, child: Text('Preferencia $rank'))], onChanged: (rank) => setDialog(() { if (rank == null) { prefs.remove(block); } else { prefs[block] = rank; } }))]),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(dialogContext, prefs), child: const Text('Aplicar'))],
+    )));
+    if (result != null && mounted) setState(() { if (result.isEmpty) { _simPersonalPreferences.remove(officer.id!); } else { _simPersonalPreferences[officer.id!] = Map<int, int>.from(result); } });
+  }
+
+  void _setSimGeneralPreference(int block, int rank) {
+    final prefs = Map<int, int>.from(_simGeneralPreferences[_profileCount] ?? {})..[block] = rank;
+    setState(() => _simGeneralPreferences[_profileCount] = prefs);
+  }
+
   Future<void> _generate() async {
     FocusScope.of(context).unfocus();
     if (_officerCount < 1 || _officerCount > _activeOfficers.length) {
@@ -195,6 +223,8 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
           currentWeekStats: currentStats,
           previousWeekStats: previousStats,
           restBlocks: blocks,
+          generalRestPreferences: _simGeneralPreferences[availableCount] ?? const {},
+          personalRestPreferences: _simPersonalPreferences,
         );
 
         for (final entry in plan.restByOfficer.entries) {
@@ -281,7 +311,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       const SizedBox(height: 12),
                       const Text('Días libres de los oficiales', style: TextStyle(fontWeight: FontWeight.w800, color: kBrandNavy)),
                       const Text('Edita los días libres solo para esta prueba.', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                      ..._activeOfficers.take(_officerCount).map((officer) => Card(child: ListTile(leading: const Icon(Icons.event_busy), title: Text(officer.name), subtitle: Text((((_simDaysOff[officer.id] ?? {}).toList()..sort()).isEmpty ? 'Sin días libres' : ((_simDaysOff[officer.id] ?? {}).toList()..sort()).map((d) => _dayNames[d - 1]).join(', '))), trailing: const Icon(Icons.edit), onTap: () => _editDaysOff(officer)))),
+                      ..._activeOfficers.take(_officerCount).map((officer) => Card(child: ListTile(leading: const Icon(Icons.event_busy), title: Text(officer.name), subtitle: Text((((_simDaysOff[officer.id] ?? {}).toList()..sort()).isEmpty ? 'Sin días libres' : ((_simDaysOff[officer.id] ?? {}).toList()..sort()).map((d) => _dayNames[d - 1]).join(', '))), trailing: Wrap(mainAxisSize: MainAxisSize.min, children: [IconButton(tooltip: 'Preferencias personales', icon: const Icon(Icons.star_outline), onPressed: () => _editSimPersonalPreferences(officer)), IconButton(tooltip: 'Días libres', icon: const Icon(Icons.event_busy), onPressed: () => _editDaysOff(officer))]), onTap: () => _editDaysOff(officer)))),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(
                         value: _profileCount.clamp(1, 12),
@@ -304,6 +334,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         trailing: const Icon(Icons.edit),
                         onTap: () => _editSimBlock(block),
                       ))),
+                      const SizedBox(height: 8),
+                      const Text('Preferencias generales', style: TextStyle(fontWeight: FontWeight.w800, color: kBrandNavy)),
+                      const Text('1 es el turno más preferido. Puedes repetir una prioridad para indicar empate.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      ...(_simulationProfiles[_profileCount] ?? []).map((block) => Row(children: [Expanded(child: Text('Turno ${block.number} · ${block.start}–${block.end}')), DropdownButton<int>(value: (_simGeneralPreferences[_profileCount]?[block.number] ?? ((_simulationProfiles[_profileCount]?.length ?? 1) - block.number + 1)).clamp(1, (_simulationProfiles[_profileCount]?.length ?? 1)).toInt(), items: [for (var rank = 1; rank <= (_simulationProfiles[_profileCount]?.length ?? 1); rank++) DropdownMenuItem(value: rank, child: Text('Prioridad $rank'))], onChanged: (rank) { if (rank != null) _setSimGeneralPreference(block.number, rank); })])),
                       const SizedBox(height: 8),
                       Row(children: [
                         const Icon(Icons.date_range, color: kBrandNavy),
@@ -398,8 +432,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             ...day.blocks.map((block) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 3),
               child: Row(children: [
+                Container(width: 5, height: 30, decoration: BoxDecoration(color: _restColor(block.number), borderRadius: BorderRadius.circular(4))),
+                const SizedBox(width: 7),
                 SizedBox(width: 92, child: Text('${block.start}–${block.end}', style: const TextStyle(fontWeight: FontWeight.w700))),
-                Expanded(child: Text(namesByBlock[block.number]?.join(', ') ?? 'Sin asignar')),
+                Expanded(child: Text(namesByBlock[block.number]?.join(', ') ?? 'Sin asignar')), 
                 Text('Máx. ${block.capacity}', style: const TextStyle(fontSize: 11, color: Colors.black54)),
               ]),
             )),
@@ -412,13 +448,27 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: Row(children: [
               SizedBox(width: 58, child: Text('${a.hour.toString().padLeft(2, '0')}:00', style: const TextStyle(fontWeight: FontWeight.w800))),
-              Expanded(child: Text(a.officer)),
+              Expanded(child: Row(children: [Container(width: 9, height: 9, decoration: BoxDecoration(color: _officerColorByName(a.officer), shape: BoxShape.circle)), const SizedBox(width: 7), Expanded(child: Text(a.officer))])),
               if (a.longRoute) const Chip(label: Text('Recorrido largo', style: TextStyle(fontSize: 10)), visualDensity: VisualDensity.compact),
             ]),
           )),
         ],
       ),
     );
+  }
+
+  Color _restColor(int block) {
+    const colors = [Color(0xFF1565C0), Color(0xFF00897B), Color(0xFFEF6C00), Color(0xFF6A1B9A), Color(0xFFC62828), Color(0xFF00838F), Color(0xFF5D4037), Color(0xFFAD1457)];
+    return colors[(block - 1) % colors.length];
+  }
+
+  Color _officerColorByName(String name) {
+    final index = _activeOfficers.indexWhere((o) => o.name == name);
+    if (index < 0) return kBrandNavy;
+    final hex = _activeOfficers[index].colorHex.trim().replaceFirst('#', '');
+    final parsed = int.tryParse(hex, radix: 16);
+    if (parsed != null) return Color(0xFF000000 | parsed);
+    return _restColor(index + 1);
   }
 
   String _date(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
