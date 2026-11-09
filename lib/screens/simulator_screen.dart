@@ -74,7 +74,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
         _simulationProfiles[profile.officerCount] = profile.blocks.map((b) => RestBlock(number: b.number, start: b.start, end: b.end, capacity: b.capacity)).toList();
         _simGeneralPreferences[profile.officerCount] = Map<int, int>.from(generalPreferences[profile.officerCount] ?? {});
       }
-      _profileCount = _officerCount.clamp(1, 12);
+      _profileCount = _officerCount.clamp(1, 12).toInt();
       _simPersonalPreferences.clear();
       for (final officer in officers) { if (officer.restPreferences.isNotEmpty && officer.id != null) _simPersonalPreferences[officer.id!] = Map<int, int>.from(officer.restPreferences); }
     });
@@ -314,7 +314,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       ..._activeOfficers.take(_officerCount).map((officer) => Card(child: ListTile(leading: const Icon(Icons.event_busy), title: Text(officer.name), subtitle: Text((((_simDaysOff[officer.id] ?? {}).toList()..sort()).isEmpty ? 'Sin días libres' : ((_simDaysOff[officer.id] ?? {}).toList()..sort()).map((d) => _dayNames[d - 1]).join(', '))), trailing: Wrap(mainAxisSize: MainAxisSize.min, children: [IconButton(tooltip: 'Preferencias personales', icon: const Icon(Icons.star_outline), onPressed: () => _editSimPersonalPreferences(officer)), IconButton(tooltip: 'Días libres', icon: const Icon(Icons.event_busy), onPressed: () => _editDaysOff(officer))]), onTap: () => _editDaysOff(officer)))),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(
-                        value: _profileCount.clamp(1, 12),
+                        value: _profileCount.clamp(1, 12).toInt(),
                         decoration: const InputDecoration(labelText: 'Perfil de descansos (oficiales disponibles)'),
                         items: List.generate(12, (i) => i + 1).map((n) => DropdownMenuItem(value: n, child: Text('$n ${n == 1 ? 'oficial' : 'oficiales'}'))).toList(),
                         onChanged: (v) => setState(() { if (v != null) _profileCount = v; }),
