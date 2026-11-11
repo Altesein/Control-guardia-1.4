@@ -48,26 +48,61 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/key.jks
           test -s android/app/key.jks
           keytool -list -keystore android/app/key.jks -storepass 123456 -alias controlkey >/dev/null
-          cat << 'EOF' > android/key.properties
+          cat << 'PROPERTIES' > android/key.properties
           storePassword=123456
           keyPassword=123456
           keyAlias=controlkey
           storeFile=key.jks
-          EOF
+          PROPERTIES
 
       - name: Instalar dependencias
         run: flutter pub get
 
       - name: Compilar APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/diagnostico
+          flutter build apk --release 2>&1 | tee build/diagnostico/compilacion.log
+          build_status=${PIPESTATUS[0]}
+          {
+            echo "## Resultado de compilación Android"
+            echo
+            if [ "$build_status" -eq 0 ]; then
+              echo "**Resultado:** compilación completada correctamente."
+            else
+              echo "**Resultado:** compilación fallida (código $build_status)."
+              echo
+              echo "### Mensajes relevantes"
+              if grep -Ein -C 2 '(^|[[:space:]])(error|exception|failed|failure):|\[ERROR\]|FAILURE: Build failed|What went wrong:' build/diagnostico/compilacion.log | tail -n 100; then
+                :
+              else
+                echo "No se detectaron patrones habituales; se adjunta el registro completo."
+              fi
+              echo
+              echo "El registro completo está disponible en el artefacto **registro-compilacion**."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$build_status"
+
+      - name: Publicar registro de compilación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-compilacion
+          path: build/diagnostico/compilacion.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Preparar archivo APK
+        if: success()
         run: |
           set -euo pipefail
           cp build/app/outputs/flutter-apk/app-release.apk \
             build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.4.apk
 
       - name: Publicar APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Control-de-Guardia-v1.0.4
