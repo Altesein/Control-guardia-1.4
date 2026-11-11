@@ -309,18 +309,30 @@ class AssignmentEngine {
     preferenceRanks.sort();
     final groupPreferenceTotal = preferenceRanks.fold<int>(0, (sum, rank) => sum + rank);
     final groupWorstPreference = preferenceRanks.isEmpty ? 0 : preferenceRanks.last;
-    final values = <int>[];
+
+    // Group equity has priority over individual preferences. Compare the
+    // most-used rest blocks first (descending), so a 2/0 distribution is
+    // considered worse than a 1/1 distribution.
+    final currentValues = <int>[];
     for (final e in assignment.entries) {
-      values.add(current[e.key]?.restCount(e.value) ?? 0);
+      currentValues.add(current[e.key]?.restCount(e.value) ?? 0);
     }
-    values.sort();
-    final orderedIds = assignment.keys.toList()..sort();
-    // Keep officer identity in this tie-breaker so the preferred assignment
-    // alternates between equally ranked officers across weeks.
-    final previousValues = orderedIds
-        .map((id) => previous[id]?.restCount(assignment[id]!) ?? 0)
-        .toList();
-    return [groupPreferenceTotal, groupWorstPreference, ...values, ...previousValues];
+    currentValues.sort((a, b) => b.compareTo(a));
+
+    // Previous-week counts break equal current-week opportunities and make
+    // repeated preferences rotate naturally between officers over time.
+    final previousValues = <int>[];
+    for (final e in assignment.entries) {
+      previousValues.add(previous[e.key]?.restCount(e.value) ?? 0);
+    }
+    previousValues.sort((a, b) => b.compareTo(a));
+
+    return [
+      ...currentValues,
+      ...previousValues,
+      groupPreferenceTotal,
+      groupWorstPreference,
+    ];
   }
 
   void _combinations(

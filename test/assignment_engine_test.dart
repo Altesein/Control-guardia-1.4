@@ -145,4 +145,29 @@ void main() {
     expect(plan.restByOfficer.values.where((block) => block == 3), hasLength(2));
   });
 
+  test('el equilibrio del grupo prevalece cuando las preferencias personales empatan', () {
+    final plan = AssignmentEngine().generate(
+      date: '2026-08-17',
+      active: officers(2),
+      absentIds: {},
+      unavailableIds: {},
+      currentWeekStats: {1: const WeeklyStats(), 2: const WeeklyStats()},
+      previousWeekStats: {
+        1: const WeeklyStats(restCounts: [3, 0]),
+        2: const WeeklyStats(restCounts: [0, 3]),
+      },
+      restBlocks: const [
+        RestBlock(number: 1, start: '22:00', end: '00:00', capacity: 1),
+        RestBlock(number: 2, start: '00:00', end: '02:00', capacity: 1),
+      ],
+      personalRestPreferences: {
+        1: {1: 1, 2: 2},
+        2: {1: 1, 2: 2},
+      },
+    );
+
+    expect(plan.restByOfficer[1], 2);
+    expect(plan.restByOfficer[2], 1);
+  });
+
 }
