@@ -104,4 +104,70 @@ void main() {
     );
     expect(plan.assignments.every((a) => a.officer != 'Oficial 4' && a.officer != 'Oficial 5'), isTrue);
   });
+  test('prioriza el beneficio conjunto usando preferencias personales y generales', () {
+    final plan = AssignmentEngine().generate(
+      date: '2026-08-17',
+      active: officers(2),
+      absentIds: {},
+      unavailableIds: {},
+      currentWeekStats: {1: const WeeklyStats(), 2: const WeeklyStats()},
+      previousWeekStats: const {},
+      restBlocks: const [
+        RestBlock(number: 1, start: '22:00', end: '00:00', capacity: 1),
+        RestBlock(number: 2, start: '00:00', end: '02:00', capacity: 1),
+      ],
+      generalRestPreferences: {1: 3, 2: 1},
+      personalRestPreferences: {
+        1: {1: 1, 2: 3},
+      },
+    );
+
+    expect(plan.restByOfficer[1], 1);
+    expect(plan.restByOfficer[2], 2);
+  });
+
+  test('la preferencia general decide dónde se comparte un descanso', () {
+    final plan = AssignmentEngine().generate(
+      date: '2026-08-17',
+      active: officers(4),
+      absentIds: {},
+      unavailableIds: {},
+      currentWeekStats: {for (var i = 1; i <= 4; i++) i: const WeeklyStats()},
+      previousWeekStats: const {},
+      restBlocks: const [
+        RestBlock(number: 1, start: '22:00', end: '00:00', capacity: 2),
+        RestBlock(number: 2, start: '00:00', end: '02:00', capacity: 2),
+        RestBlock(number: 3, start: '02:00', end: '04:00', capacity: 2),
+      ],
+      generalRestPreferences: {1: 3, 2: 2, 3: 1},
+    );
+
+    expect(plan.restByOfficer.values.where((block) => block == 3), hasLength(2));
+  });
+
+  test('el equilibrio del grupo prevalece cuando las preferencias personales empatan', () {
+    final plan = AssignmentEngine().generate(
+      date: '2026-08-17',
+      active: officers(2),
+      absentIds: {},
+      unavailableIds: {},
+      currentWeekStats: {1: const WeeklyStats(), 2: const WeeklyStats()},
+      previousWeekStats: {
+        1: const WeeklyStats(restCounts: [3, 0]),
+        2: const WeeklyStats(restCounts: [0, 3]),
+      },
+      restBlocks: const [
+        RestBlock(number: 1, start: '22:00', end: '00:00', capacity: 1),
+        RestBlock(number: 2, start: '00:00', end: '02:00', capacity: 1),
+      ],
+      personalRestPreferences: {
+        1: {1: 1, 2: 2},
+        2: {1: 1, 2: 2},
+      },
+    );
+
+    expect(plan.restByOfficer[1], 2);
+    expect(plan.restByOfficer[2], 1);
+  });
+
 }

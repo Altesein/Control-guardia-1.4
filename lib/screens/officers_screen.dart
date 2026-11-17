@@ -14,13 +14,21 @@ class _OfficerEditResult {
   final String alias;
   final String colorHex;
   final Set<int> daysOff;
+  final Map<int, int> restPreferences;
 
   const _OfficerEditResult({
     required this.name,
     required this.alias,
     required this.colorHex,
     required this.daysOff,
+    required this.restPreferences,
   });
+}
+
+class _OfficerAddResult {
+  final Set<int> daysOff;
+  final Map<int, int> restPreferences;
+  const _OfficerAddResult(this.daysOff, this.restPreferences);
 }
 
 class _OfficersScreenState extends State<OfficersScreen> {
@@ -256,6 +264,7 @@ class _OfficersScreenState extends State<OfficersScreen> {
     final daysOff = await AppDb.instance.weeklyDaysOff(officer.id!);
     final selected = {...daysOff};
     var selectedColor = officer.colorHex.trim();
+    final personalPreferences = Map<int, int>.from(officer.restPreferences);
 
     final result = await showDialog<_OfficerEditResult>(
       context: context,
@@ -322,6 +331,11 @@ class _OfficersScreenState extends State<OfficersScreen> {
                         });
                       },
                     ),
+                  const SizedBox(height: 12),
+                  const Align(alignment: Alignment.centerLeft, child: Text('Preferencias personales de descanso', style: TextStyle(fontWeight: FontWeight.w700))),
+                  const Text('Si dejas un turno sin configurar, se aplicará la preferencia general.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  for (var block = 1; block <= 12; block++)
+                    Row(children: [Expanded(child: Text('Turno $block')), DropdownButton<int?>(value: personalPreferences[block], hint: const Text('General'), items: [const DropdownMenuItem<int?>(value: null, child: Text('General')), for (var rank = 1; rank <= 12; rank++) DropdownMenuItem<int?>(value: rank, child: Text('Preferencia $rank'))], onChanged: (rank) => setDialogState(() { if (rank == null) { personalPreferences.remove(block); } else { personalPreferences[block] = rank; } }))]),
                 ],
               ),
             ),
@@ -342,6 +356,7 @@ class _OfficersScreenState extends State<OfficersScreen> {
                     alias: aliasController.text.trim(),
                     colorHex: selectedColor,
                     daysOff: {...selected},
+                    restPreferences: Map<int, int>.from(personalPreferences),
                   ),
                 );
               },
@@ -372,6 +387,7 @@ class _OfficersScreenState extends State<OfficersScreen> {
         name: result.name,
         alias: result.alias,
         colorHex: result.colorHex,
+        restPreferences: result.restPreferences,
       );
       await AppDb.instance.setWeeklyDaysOff(officer.id!, result.daysOff);
       await _load();
@@ -427,8 +443,9 @@ class _OfficersScreenState extends State<OfficersScreen> {
     final nameController = TextEditingController();
     final aliasController = TextEditingController();
     final selected = <int>{};
+    final personalPreferences = <int, int>{};
 
-    final result = await showDialog<Set<int>>(
+    final result = await showDialog<_OfficerAddResult>(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -477,6 +494,11 @@ class _OfficersScreenState extends State<OfficersScreen> {
                         });
                       },
                     ),
+                  const SizedBox(height: 12),
+                  const Align(alignment: Alignment.centerLeft, child: Text('Preferencias personales de descanso', style: TextStyle(fontWeight: FontWeight.w700))),
+                  const Text('Si no configuras un turno, se usará la preferencia general.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  for (var block = 1; block <= 12; block++)
+                    Row(children: [Expanded(child: Text('Turno $block')), DropdownButton<int?>(value: personalPreferences[block], hint: const Text('General'), items: [const DropdownMenuItem<int?>(value: null, child: Text('General')), for (var rank = 1; rank <= 12; rank++) DropdownMenuItem<int?>(value: rank, child: Text('Preferencia $rank'))], onChanged: (rank) => setDialogState(() { if (rank == null) { personalPreferences.remove(block); } else { personalPreferences[block] = rank; } }))]),
                 ],
               ),
             ),
@@ -489,7 +511,7 @@ class _OfficersScreenState extends State<OfficersScreen> {
             FilledButton(
               onPressed: () {
                 if (nameController.text.trim().isNotEmpty) {
-                  Navigator.pop(context, selected);
+                  Navigator.pop(context, _OfficerAddResult({...selected}, Map<int, int>.from(personalPreferences)));
                 }
               },
               child: const Text('Guardar'),
@@ -513,7 +535,9 @@ class _OfficersScreenState extends State<OfficersScreen> {
         }
         return;
       }
-      await AppDb.instance.addOfficer(name, alias: alias, daysOff: result);
+      await AppDb.instance.addOfficer(name, alias: alias, daysOff: result.daysOff);
+      final created = (await AppDb.instance.officers()).firstWhere((o) => o.name == name);
+      await AppDb.instance.updateOfficer(id: created.id!, name: created.name, alias: created.alias, colorHex: created.colorHex, restPreferences: result.restPreferences);
       await _load();
     }
   }

@@ -13,6 +13,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _selectedOfficerCount = 3;
   int _activeOfficerCount = 3;
   List<RestBlock> _blocks = const [];
+  Map<int, int> _preferences = {};
   bool _loading = true;
 
   @override
@@ -25,11 +26,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final officers = await AppDb.instance.officers();
     final active = officers.where((o) => o.active).length.clamp(1, 12).toInt();
     final profile = await AppDb.instance.restProfile(active);
+    final preferences = await AppDb.instance.generalRestPreferences(active);
     if (!mounted) return;
     setState(() {
       _activeOfficerCount = active;
       _selectedOfficerCount = active;
       _blocks = profile.blocks;
+      _preferences = preferences;
       _loading = false;
     });
   }
@@ -37,10 +40,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadProfile(int count) async {
     setState(() => _loading = true);
     final profile = await AppDb.instance.restProfile(count);
+    final preferences = await AppDb.instance.generalRestPreferences(count);
     if (!mounted) return;
     setState(() {
       _selectedOfficerCount = count;
       _blocks = profile.blocks;
+      _preferences = preferences;
       _loading = false;
     });
   }
@@ -63,6 +68,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final activeBlocks = _blocks.where((b) => b.capacity > 0).length;
     final total = _blocks.fold<int>(0, (sum, b) => sum + b.capacity);
     return activeBlocks <= _selectedOfficerCount && total >= _selectedOfficerCount;
+  }
+
+  Future<void> _setGeneralPreference(int blockNumber, int rank) async {
+    final updated = Map<int, int>.from(_preferences)..[blockNumber] = rank;
+    setState(() => _preferences = updated);
+    await AppDb.instance.setGeneralRestPreferences(_selectedOfficerCount, updated);
   }
 
   Future<void> _editBlock(RestBlock block) async {
@@ -260,6 +271,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: Text(
                           '⚠ La capacidad configurada no alcanza para todos los oficiales disponibles. Aumenta alguna capacidad o agrega descansos.',
                           style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 12),
+                  _section('Preferencias generales de los descansos', [
+                    const Text('Asigna un orden de gusto a cada turno. 1 es el más preferido. Si dos turnos tienen el mismo número, tendrán la misma prioridad.', style: TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    for (final block in _blocks)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(block.label),
+                        subtitle: Text('${block.start} – ${block.end}'),
+                        trailing: DropdownButton<int>(
+                          value: (_preferences[block.number] ?? block.number).clamp(1, _blocks.length).toInt(),
+                          items: [for (var rank = 1; rank <= _blocks.length; rank++) DropdownMenuItem(value: rank, child: Text('Preferencia $rank'))],
+                          onChanged: (rank) { if (rank != null) _setGeneralPreference(block.number, rank); },
                         ),
                       ),
                   ]),
