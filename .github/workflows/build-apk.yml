@@ -19,6 +19,15 @@ jobs:
       - name: Descargar proyecto
         uses: actions/checkout@v4
 
+      - name: Configurar Java compatible con Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verificar Java
+        run: java -version
+
       - name: Instalar Flutter
         uses: subosito/flutter-action@v2
         with:
