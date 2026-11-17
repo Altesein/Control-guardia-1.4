@@ -22,8 +22,6 @@ class AssignmentEngine {
     required Map<int, WeeklyStats> currentWeekStats,
     required Map<int, WeeklyStats> previousWeekStats,
     required List<RestBlock> restBlocks,
-    Map<int, int> generalRestPreferences = const {},
-    Map<int, Map<int, int>> personalRestPreferences = const {},
   }) {
     final available = active
         .where((o) =>
@@ -43,8 +41,6 @@ class AssignmentEngine {
       sizeOptions,
       currentWeekStats,
       previousWeekStats,
-      generalRestPreferences,
-      personalRestPreferences,
     );
 
     final weeklyRoutes = <int, int>{
@@ -259,8 +255,6 @@ class AssignmentEngine {
     List<List<int>> sizeOptions,
     Map<int, WeeklyStats> current,
     Map<int, WeeklyStats> previous,
-    Map<int, int> generalPreferences,
-    Map<int, Map<int, int>> personalPreferences,
   ) {
     final candidates = <Map<int, int>>[];
 
@@ -283,8 +277,8 @@ class AssignmentEngine {
     }
 
     candidates.sort((a, b) {
-      final sa = _restFairnessScore(a, current, previous, generalPreferences, personalPreferences);
-      final sb = _restFairnessScore(b, current, previous, generalPreferences, personalPreferences);
+      final sa = _restFairnessScore(a, current, previous);
+      final sb = _restFairnessScore(b, current, previous);
       for (var i = 0; i < sa.length; i++) {
         if (sa[i] != sb[i]) return sa[i].compareTo(sb[i]);
       }
@@ -298,41 +292,17 @@ class AssignmentEngine {
     Map<int, int> assignment,
     Map<int, WeeklyStats> current,
     Map<int, WeeklyStats> previous,
-    Map<int, int> generalPreferences,
-    Map<int, Map<int, int>> personalPreferences,
   ) {
-    final preferenceRanks = <int>[];
+    final values = <int>[];
     for (final e in assignment.entries) {
-      final personal = personalPreferences[e.key]?[e.value];
-      preferenceRanks.add(personal ?? generalPreferences[e.value] ?? e.value);
+      values.add(current[e.key]?.restCount(e.value) ?? 0);
     }
-    preferenceRanks.sort();
-    final groupPreferenceTotal = preferenceRanks.fold<int>(0, (sum, rank) => sum + rank);
-    final groupWorstPreference = preferenceRanks.isEmpty ? 0 : preferenceRanks.last;
-
-    // Group equity has priority over individual preferences. Compare the
-    // most-used rest blocks first (descending), so a 2/0 distribution is
-    // considered worse than a 1/1 distribution.
-    final currentValues = <int>[];
-    for (final e in assignment.entries) {
-      currentValues.add(current[e.key]?.restCount(e.value) ?? 0);
-    }
-    currentValues.sort((a, b) => b.compareTo(a));
-
-    // Previous-week counts break equal current-week opportunities and make
-    // repeated preferences rotate naturally between officers over time.
-    final previousValues = <int>[];
-    for (final e in assignment.entries) {
-      previousValues.add(previous[e.key]?.restCount(e.value) ?? 0);
-    }
-    previousValues.sort((a, b) => b.compareTo(a));
-
-    return [
-      ...currentValues,
-      ...previousValues,
-      groupPreferenceTotal,
-      groupWorstPreference,
-    ];
+    values.sort();
+    final previousValues = assignment.entries
+        .map((e) => previous[e.key]?.restCount(e.value) ?? 0)
+        .toList()
+      ..sort();
+    return [...values, ...previousValues];
   }
 
   void _combinations(

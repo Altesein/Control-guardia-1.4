@@ -13,7 +13,7 @@ class AppDb {
     final path = p.join(await getDatabasesPath(), 'control_guardias.db');
     _db = await openDatabase(
       path,
-      version: 12,
+      version: 11,
       onCreate: (db, v) async => _createSchema(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -45,9 +45,6 @@ class AppDb {
         if (oldVersion < 11) {
           try { await db.execute("ALTER TABLE officers ADD COLUMN color TEXT NOT NULL DEFAULT ''"); } catch (_) {}
         }
-        if (oldVersion < 12) {
-          try { await db.execute("ALTER TABLE officers ADD COLUMN rest_preferences TEXT NOT NULL DEFAULT '{}'"); } catch (_) {}
-        }
       },
     );
   }
@@ -56,7 +53,7 @@ class AppDb {
     await db.execute('''CREATE TABLE officers(
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
       alias TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '',
-      rest_preferences TEXT NOT NULL DEFAULT '{}', active INTEGER NOT NULL DEFAULT 1)''');
+      active INTEGER NOT NULL DEFAULT 1)''');
     await db.execute('''CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)''');
     await db.execute('''CREATE TABLE absences(
       id INTEGER PRIMARY KEY AUTOINCREMENT, officer_id INTEGER NOT NULL, date TEXT NOT NULL)''');
@@ -221,7 +218,6 @@ class AppDb {
     required String name,
     required String alias,
     required String colorHex,
-    Map<int, int> restPreferences = const {},
   }) async {
     final cleanName = name.trim();
     if (cleanName.isEmpty) return;
@@ -231,7 +227,6 @@ class AppDb {
         'name': cleanName,
         'alias': alias.trim(),
         'color': colorHex.trim(),
-        'rest_preferences': jsonEncode(restPreferences.map((k, v) => MapEntry(k.toString(), v))),
       },
       where: 'id=?',
       whereArgs: [id],
@@ -289,28 +284,6 @@ class AppDb {
 
   Future<void> setSetting(String key, String value) async =>
       db.insert('settings', {'key': key, 'value': value}, conflictAlgorithm: ConflictAlgorithm.replace);
-
-  Future<Map<int, int>> generalRestPreferences(int officerCount) async {
-    final profile = await restProfile(officerCount);
-    final defaults = <int, int>{
-      for (final block in profile.blocks) block.number: profile.blocks.length - block.number + 1,
-    };
-    final raw = await setting('rest_preferences_$officerCount', fallback: '');
-    if (raw.isEmpty) return defaults;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) {
-        final saved = decoded.map((k, v) => MapEntry(int.tryParse('$k') ?? 0, int.tryParse('$v') ?? 0))..removeWhere((k, v) => k < 1 || v < 1);
-        return {...defaults, ...saved};
-      }
-    } catch (_) {}
-    return defaults;
-  }
-
-  Future<void> setGeneralRestPreferences(int officerCount, Map<int, int> preferences) async {
-    final clean = preferences.map((k, v) => MapEntry(k.toString(), v));
-    await setSetting('rest_preferences_$officerCount', jsonEncode(clean));
-  }
 
   Future<RestProfile> restProfile(int officerCount) async {
     final n = officerCount.clamp(1, 12).toInt();

@@ -1,14 +1,3 @@
-import 'dart:convert';
-
-Map<int, int> _decodeRestPreferences(Object? raw) {
-  if (raw is! String || raw.isEmpty) return const {};
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is Map) return decoded.map((k, v) => MapEntry(int.tryParse('$k') ?? 0, int.tryParse('$v') ?? 0))..removeWhere((k, v) => k < 1 || v < 1);
-  } catch (_) {}
-  return const {};
-}
-
 class Officer {
   final int? id;
   final String name;
@@ -16,8 +5,6 @@ class Officer {
   final bool active;
   /// Empty means automatic color assignment. Otherwise this is an ARGB hex color, e.g. #1565C0.
   final String colorHex;
-  /// Empty means use the general rest-turn preferences. Keys are rest block numbers.
-  final Map<int, int> restPreferences;
 
   Officer({
     this.id,
@@ -25,7 +12,6 @@ class Officer {
     this.alias = '',
     this.active = true,
     this.colorHex = '',
-    this.restPreferences = const {},
   });
 
   Map<String, Object?> toMap() => {
@@ -34,7 +20,6 @@ class Officer {
         'alias': alias,
         'active': active ? 1 : 0,
         'color': colorHex,
-        'rest_preferences': jsonEncode(restPreferences.map((k, v) => MapEntry(k.toString(), v))),
       };
 
   factory Officer.fromMap(Map<String, Object?> m) => Officer(
@@ -43,7 +28,6 @@ class Officer {
         alias: (m['alias'] as String?) ?? '',
         active: (m['active'] as int? ?? 1) == 1,
         colorHex: (m['color'] as String?) ?? '',
-        restPreferences: _decodeRestPreferences(m['rest_preferences']),
       );
 }
 

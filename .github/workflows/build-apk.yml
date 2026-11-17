@@ -1,22 +1,25 @@
-name: Construir APK Android
+name: Verificar y construir APK
 
 on:
   push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: flutter-apk-${{ github.ref }}
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Compilar aplicación Android
+  verify:
+    name: Verificar código completo
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar proyecto
+      - name: Descargar repositorio
         uses: actions/checkout@v4
 
       - name: Instalar Flutter
@@ -26,86 +29,127 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Preparar Android
+      - name: Mostrar versiones
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Generar plataforma Android si no existe
         run: |
           set -euo pipefail
+
           if [ ! -d android ]; then
             flutter create --platforms=android --no-pub .
           fi
+
+          rm -f test/widget_test.dart
+
           sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
             android/app/src/main/AndroidManifest.xml
 
-      - name: Restaurar firma existente
+      - name: Obtener dependencias
+        run: flutter pub get
+
+      - name: Formatear todos los Dart
+        run: dart format lib test
+
+      - name: Analizar todo el proyecto
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Ejecutar todas las pruebas
+        run: flutter test
+
+  build:
+    name: Construir APK
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+
+      - name: Mostrar versiones
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Generar plataforma Android si no existe
+        run: |
+          set -euo pipefail
+
+          if [ ! -d android ]; then
+            flutter create --platforms=android --no-pub .
+          fi
+
+          rm -f test/widget_test.dart
+
+          sed -i 's/android:label="[^"]*"/android:label="Control de Guardias"/' \
+            android/app/src/main/AndroidManifest.xml
+
+      - name: Restaurar KeyStore fijo
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
+
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ERROR: Falta el secreto KEYSTORE_BASE64. No se creará otra firma."
+            echo "ERROR: El secreto KEYSTORE_BASE64 no está configurado."
+            echo "No se generará una clave nueva porque eso cambiaría la firma de la aplicación."
             exit 1
           fi
+
           mkdir -p android/app
+
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/key.jks
-          test -s android/app/key.jks
-          keytool -list -keystore android/app/key.jks -storepass 123456 -alias controlkey >/dev/null
-          cat << 'PROPERTIES' > android/key.properties
+
+          if [ ! -s android/app/key.jks ]; then
+            echo "ERROR: El archivo android/app/key.jks quedó vacío."
+            exit 1
+          fi
+
+          echo "Verificando keystore..."
+
+          keytool -list \
+            -keystore android/app/key.jks \
+            -storepass 123456 \
+            -alias controlkey \
+            >/dev/null
+
+          echo "Keystore válido encontrado."
+
+          cat << 'EOF' > android/key.properties
           storePassword=123456
           keyPassword=123456
           keyAlias=controlkey
           storeFile=key.jks
-          PROPERTIES
+          EOF
 
-      - name: Instalar dependencias
+          echo "key.properties creado correctamente."
+
+      - name: Obtener dependencias
         run: flutter pub get
 
-      - name: Compilar APK
-        shell: bash
-        run: |
-          set +e
-          mkdir -p build/diagnostico
-          flutter build apk --release 2>&1 | tee build/diagnostico/compilacion.log
-          build_status=${PIPESTATUS[0]}
-          {
-            echo "## Resultado de compilación Android"
-            echo
-            if [ "$build_status" -eq 0 ]; then
-              echo "**Resultado:** compilación completada correctamente."
-            else
-              echo "**Resultado:** compilación fallida (código $build_status)."
-              echo
-              echo "### Mensajes relevantes"
-              if grep -Ein -C 2 '(^|[[:space:]])(error|exception|failed|failure):|\[ERROR\]|FAILURE: Build failed|What went wrong:' build/diagnostico/compilacion.log | tail -n 100; then
-                :
-              else
-                echo "No se detectaron patrones habituales; se adjunta el registro completo."
-              fi
-              echo
-              echo "El registro completo está disponible en el artefacto **registro-compilacion**."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$build_status"
+      - name: Construir APK release
+        run: flutter build apk --release
 
-      - name: Publicar registro de compilación
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: registro-compilacion
-          path: build/diagnostico/compilacion.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Preparar archivo APK
-        if: success()
+      - name: Renombrar APK para entrega
         run: |
           set -euo pipefail
           cp build/app/outputs/flutter-apk/app-release.apk \
-            build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.4.apk
+            build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
+          ls -lh build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
 
-      - name: Publicar APK
-        if: success()
+      - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: Control-de-Guardia-v1.0.4
-          path: build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.4.apk
+          name: Control-de-Guardia-v1.0.2
+          path: build/app/outputs/flutter-apk/Control-de-Guardia-v1.0.2.apk
           if-no-files-found: error
           retention-days: 14
